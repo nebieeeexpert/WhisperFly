@@ -20,7 +20,8 @@ struct AppSettings: Codable, Sendable, Equatable {
     var pasteDelayMs: Int = 100
     var groqApiKey: String = ""
     var openRouterApiKey: String = ""
-    var sourceLanguage: String = "ru"
+    /// Supported source languages: en, ru, de, fr, es, ja, zh, ko, it, hi
+    var sourceLanguage: String = "en"
     var targetLanguage: String = "en"
     var customSystemPrompt: String = ""
     var readAloudEnabled: Bool = false

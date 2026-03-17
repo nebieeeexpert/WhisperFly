@@ -24,9 +24,9 @@ enum RewriteMode: String, Codable, Sendable, CaseIterable {
     
     var localizedName: String {
         switch self {
-        case .cleanup: return String(localized: "rewrite.cleanup", defaultValue: "Cleanup")
-        case .punctuate: return String(localized: "rewrite.punctuate", defaultValue: "Punctuate")
-        case .translate: return String(localized: "rewrite.translate", defaultValue: "Translate to English")
+        case .cleanup:   return L("rewrite.cleanup", "Cleanup")
+        case .punctuate: return L("rewrite.punctuate", "Punctuate")
+        case .translate: return L("rewrite.translate", "Translate to English")
         }
     }
 }

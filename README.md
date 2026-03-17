@@ -18,7 +18,7 @@ Fork of [qwenwishper](https://github.com/hukopo/qwenwishper) — replaces all lo
 - **AI text rewriting** — cleanup, punctuation fix, or translate-to-English via Gemini
 - **Read aloud** — optionally speak back the transcribed text using the system TTS voice
 - **Auto-paste** into the focused app (Accessibility API with clipboard fallback)
-- **Russian UI** — the app automatically shows in Russian when the system language is Russian
+- **Localized UI** — the app automatically adapts to your system language (English, Russian, German, French, Spanish, Japanese, Chinese, Korean, Italian, Hindi)
 - No local model downloads, no GPU required
 
 ### Setup
@@ -57,6 +57,28 @@ Fork of [qwenwishper](https://github.com/hukopo/qwenwishper) — replaces all lo
 - macOS 14 (Sonoma) or later
 - Swift 6 toolchain
 - Internet connection (all recognition is done via API)
+
+### Removing macOS Quarantine (xattr)
+
+macOS marks apps downloaded from the internet with a quarantine flag, which can trigger **"app is damaged"** or **Gatekeeper blocked** warnings. To remove this flag, run the following command in Terminal:
+
+```bash
+xattr -cr /Applications/WhisperFly.app
+```
+
+**What it does:**
+- `xattr` — manipulates extended attributes on files and directories
+- `-c` — **clears** all extended attributes (including `com.apple.quarantine`)
+- `-r` — applies **recursively** to all files inside the `.app` bundle
+
+**Step-by-step:**
+1. Move `WhisperFly.app` to `/Applications` (or wherever you keep it)
+2. Open **Terminal** (`⌘Space` → type *Terminal*)
+3. Run the command above (adjust path if the app is elsewhere, e.g. `~/Desktop/WhisperFly.app`)
+4. Launch the app normally
+
+> **Why is this needed?**  
+> Apple's Gatekeeper quarantines any app not signed with an Apple Developer certificate or notarized through Apple. The `xattr -cr` command is the standard developer workaround for unsigned/self-built apps.
 
 ### Architecture
 
@@ -104,7 +126,7 @@ Sources/WhisperFly/
 - **AI-переформулировка текста** — исправление, пунктуация или перевод на английский через Gemini
 - **Прочитать вслух** — озвучить распознанный текст системным голосом TTS
 - **Автовставка** в активное поле ввода (Accessibility API, при неудаче — через буфер обмена)
-- **Русский интерфейс** — приложение автоматически переключается на русский при соответствующем системном языке
+- **Локализованный интерфейс** — приложение автоматически адаптируется к языку системы (английский, русский, немецкий, французский, испанский, японский, китайский, корейский, итальянский, хинди)
 - Не требует загрузки локальных моделей и GPU
 
 ### Установка
@@ -143,6 +165,28 @@ Sources/WhisperFly/
 - macOS 14 (Sonoma) или новее
 - Инструментарий Swift 6
 - Подключение к интернету (распознавание выполняется через API)
+
+### Снятие карантина macOS (xattr)
+
+macOS помечает приложения, загруженные из интернета, флагом карантина, что может вызвать предупреждение **«приложение повреждено»** или блокировку Gatekeeper. Чтобы снять этот флаг, выполните команду в Терминале:
+
+```bash
+xattr -cr /Applications/WhisperFly.app
+```
+
+**Что делает команда:**
+- `xattr` — управляет расширенными атрибутами файлов и папок
+- `-c` — **очищает** все расширенные атрибуты (включая `com.apple.quarantine`)
+- `-r` — применяет операцию **рекурсивно** ко всем файлам внутри `.app`
+
+**Пошаговая инструкция:**
+1. Переместите `WhisperFly.app` в `/Applications` (или в другое удобное место)
+2. Откройте **Терминал** (`⌘Space` → введите *Терминал*)
+3. Выполните команду выше (при необходимости замените путь, например `~/Desktop/WhisperFly.app`)
+4. Запустите приложение обычным способом
+
+> **Почему это нужно?**  
+> Gatekeeper Apple помечает карантином любое приложение, не подписанное сертификатом Apple Developer и не нотаризованное Apple. Команда `xattr -cr` — стандартный обходной путь для неподписанных / самостоятельно собранных приложений.
 
 ### Архитектура
 

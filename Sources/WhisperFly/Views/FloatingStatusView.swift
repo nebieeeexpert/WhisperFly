@@ -38,19 +38,19 @@ struct FloatingStatusView: View {
     private var statusLabel: some View {
         switch controller.status {
         case .recording:
-            Text("floating.listening")
+            Text(L("floating.listening", "Listening…"))
                 .font(.system(size: 13, weight: .medium))
                 .foregroundColor(.red)
         case .transcribing:
-            Text("floating.transcribing")
+            Text(L("floating.transcribing", "Transcribing…"))
                 .font(.system(size: 13, weight: .medium))
                 .foregroundColor(.orange)
         case .rewriting:
-            Text("floating.rewriting")
+            Text(L("floating.rewriting", "Rewriting…"))
                 .font(.system(size: 13, weight: .medium))
                 .foregroundColor(.purple)
         case .pasting:
-            Text("floating.done")
+            Text(L("floating.done", "Done ✓"))
                 .font(.system(size: 13, weight: .medium))
                 .foregroundColor(.green)
         default:

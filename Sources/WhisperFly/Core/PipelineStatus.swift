@@ -17,12 +17,12 @@ enum PipelineStatus: Sendable, Equatable {
     
     var statusText: String {
         switch self {
-        case .idle: return String(localized: "status.ready", defaultValue: "Ready")
-        case .recording: return String(localized: "status.recording", defaultValue: "Recording…")
-        case .transcribing: return String(localized: "status.transcribing", defaultValue: "Transcribing…")
-        case .rewriting: return String(localized: "status.rewriting", defaultValue: "Rewriting…")
-        case .pasting: return String(localized: "status.pasting", defaultValue: "Pasting…")
-        case .error(let msg): return String(format: NSLocalizedString("status.error", value: "Error: %@", comment: ""), msg)
+        case .idle:           return L("status.ready", "Ready")
+        case .recording:      return L("status.recording", "Recording…")
+        case .transcribing:   return L("status.transcribing", "Transcribing…")
+        case .rewriting:      return L("status.rewriting", "Rewriting…")
+        case .pasting:        return L("status.pasting", "Pasting…")
+        case .error(let msg): return L("status.error", "Error: %@", msg)
         }
     }
     
