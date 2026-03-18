@@ -44,10 +44,11 @@ final class FloatingPanel {
         guard let panel else { return }
         
         // Try to position near the focused text field using Accessibility
-        if let caretPos = getCaretPosition() {
+        if let caretRect = getCaretRect() {
+            // Place the panel slightly above the input field (8 pt gap)
             let panelOrigin = NSPoint(
-                x: caretPos.x + 8,
-                y: caretPos.y - 50
+                x: caretRect.minX + 8,
+                y: caretRect.maxY + 8
             )
             panel.setFrameOrigin(panelOrigin)
             return
@@ -62,7 +63,8 @@ final class FloatingPanel {
         }
     }
     
-    private func getCaretPosition() -> NSPoint? {
+    /// Returns the caret/selection bounding rect in AppKit screen coordinates (bottom-left origin).
+    private func getCaretRect() -> CGRect? {
         let systemWide = AXUIElementCreateSystemWide()
         var focusedElement: AnyObject?
         guard AXUIElementCopyAttributeValue(systemWide, kAXFocusedUIElementAttribute as CFString, &focusedElement) == .success else {
@@ -90,9 +92,9 @@ final class FloatingPanel {
         // Convert from screen coordinates (top-left origin) to AppKit (bottom-left origin)
         if let screen = NSScreen.main {
             let flippedY = screen.frame.height - rect.origin.y - rect.height
-            return NSPoint(x: rect.origin.x, y: flippedY)
+            return CGRect(x: rect.origin.x, y: flippedY, width: rect.width, height: rect.height)
         }
         
-        return NSPoint(x: rect.origin.x, y: rect.origin.y)
+        return rect
     }
 }
