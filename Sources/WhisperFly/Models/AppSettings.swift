@@ -12,6 +12,19 @@ struct AppSettings: Codable, Sendable, Equatable {
         case ctrlOptSpace = "⌃⌥Space"
     }
     
+    enum AudioSource: String, Codable, Sendable, CaseIterable {
+        case microphone = "Microphone"
+        case systemAudio = "System Audio"
+        
+        var localizedName: String {
+            switch self {
+            case .microphone:  return L("audio_source.microphone", "Microphone")
+            case .systemAudio: return L("audio_source.system_audio", "System Audio")
+            }
+        }
+    }
+    
+    var audioSource: AudioSource = .microphone
     var transcriptionBackend: TranscriptionBackend = .groqWhisper
     var geminiRewriteEnabled: Bool = true
     var rewriteMode: RewriteMode = .cleanup

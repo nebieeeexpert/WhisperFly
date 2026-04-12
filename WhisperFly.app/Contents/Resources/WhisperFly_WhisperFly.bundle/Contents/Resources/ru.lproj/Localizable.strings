@@ -68,3 +68,16 @@
 "rewrite.cleanup" = "Исправление";
 "rewrite.punctuate" = "Пунктуация";
 "rewrite.translate" = "Перевод на английский";
+
+/* Audio source */
+"settings.audio_source" = "Источник звука";
+"audio_source.microphone" = "Микрофон";
+"audio_source.system_audio" = "Системный звук";
+"menu.start_capture" = "Захват системного звука";
+"floating.capturing" = "Захват…";
+"floating.copied" = "Скопировано ✓";
+
+/* File transcription */
+"menu.transcribe_file" = "Транскрибировать файл…";
+"file.pick_title" = "Выберите аудио или видео файл";
+"error.no_speech" = "Речь не обнаружена";

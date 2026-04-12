@@ -19,8 +19,15 @@ struct FloatingStatusView: View {
     private var statusIcon: some View {
         switch controller.status {
         case .recording:
-            WaveformView(level: controller.audioLevel)
-                .frame(width: 28, height: 18)
+            if controller.settings.audioSource == .systemAudio {
+                Image(systemName: "speaker.wave.2.fill")
+                    .foregroundColor(.blue)
+                    .font(.system(size: 14))
+                    .symbolEffect(.variableColor.iterative, isActive: true)
+            } else {
+                WaveformView(level: controller.audioLevel)
+                    .frame(width: 28, height: 18)
+            }
         case .transcribing, .rewriting:
             ProgressView()
                 .controlSize(.small)
@@ -38,9 +45,15 @@ struct FloatingStatusView: View {
     private var statusLabel: some View {
         switch controller.status {
         case .recording:
-            Text(L("floating.listening", "Listening…"))
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(.red)
+            if controller.settings.audioSource == .systemAudio {
+                Text(L("floating.capturing", "Capturing…"))
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(.blue)
+            } else {
+                Text(L("floating.listening", "Listening…"))
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(.red)
+            }
         case .transcribing:
             Text(L("floating.transcribing", "Transcribing…"))
                 .font(.system(size: 13, weight: .medium))
@@ -50,9 +63,15 @@ struct FloatingStatusView: View {
                 .font(.system(size: 13, weight: .medium))
                 .foregroundColor(.purple)
         case .pasting:
-            Text(L("floating.done", "Done ✓"))
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(.green)
+            if controller.settings.audioSource == .systemAudio {
+                Text(L("floating.copied", "Copied ✓"))
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(.green)
+            } else {
+                Text(L("floating.done", "Done ✓"))
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(.green)
+            }
         default:
             EmptyView()
         }
@@ -60,7 +79,8 @@ struct FloatingStatusView: View {
     
     private var borderColor: Color {
         switch controller.status {
-        case .recording: return .red
+        case .recording:
+            return controller.settings.audioSource == .systemAudio ? .blue : .red
         case .transcribing: return .orange
         case .rewriting: return .purple
         case .pasting: return .green

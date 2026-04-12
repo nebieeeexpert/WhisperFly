@@ -49,6 +49,16 @@ struct MenuBarContentView: View {
             
             Divider()
             
+            // Audio Source Picker
+            Picker("", selection: $controller.settings.audioSource) {
+                ForEach(AppSettings.AudioSource.allCases, id: \.self) { source in
+                    Label(source.localizedName, systemImage: source == .microphone ? "mic.fill" : "speaker.wave.2.fill")
+                        .tag(source)
+                }
+            }
+            .pickerStyle(.segmented)
+            .padding(.bottom, 4)
+            
             // Record Button
             Button(action: {
                 if controller.status == .idle {
@@ -58,9 +68,15 @@ struct MenuBarContentView: View {
                 }
             }) {
                 HStack {
-                    Image(systemName: controller.status == .recording ? "stop.circle.fill" : "mic.circle.fill")
+                    Image(systemName: controller.status == .recording
+                          ? "stop.circle.fill"
+                          : (controller.settings.audioSource == .systemAudio ? "speaker.wave.2.circle.fill" : "mic.circle.fill"))
                         .font(.title2)
-                    Text(controller.status == .recording ? L("menu.stop_recording", "Stop Recording") : L("menu.start_recording", "Start Recording"))
+                    Text(controller.status == .recording
+                         ? L("menu.stop_recording", "Stop Recording")
+                         : (controller.settings.audioSource == .systemAudio
+                            ? L("menu.start_capture", "Capture System Audio")
+                            : L("menu.start_recording", "Start Recording")))
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 4)
@@ -68,6 +84,21 @@ struct MenuBarContentView: View {
             .buttonStyle(.borderedProminent)
             .tint(controller.status == .recording ? .red : .blue)
             .disabled(controller.status.isProcessing)
+            
+            // Transcribe File Button
+            Button(action: {
+                controller.transcribeFile()
+            }) {
+                HStack {
+                    Image(systemName: "doc.text.magnifyingglass")
+                        .font(.title2)
+                    Text(L("menu.transcribe_file", "Transcribe File…"))
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 4)
+            }
+            .buttonStyle(.bordered)
+            .disabled(!controller.hasValidAPIKeys || controller.status != .idle)
             
             // Audio Level Meter
             if controller.status == .recording {

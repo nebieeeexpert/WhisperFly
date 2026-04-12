@@ -18,6 +18,12 @@ struct SettingsView: View {
     
     private var generalTab: some View {
         Form {
+            Picker(L("settings.audio_source", "Audio Source"), selection: $controller.settings.audioSource) {
+                ForEach(AppSettings.AudioSource.allCases, id: \.self) { source in
+                    Text(source.localizedName).tag(source)
+                }
+            }
+            
             Picker(L("settings.transcription_backend", "Transcription Backend"), selection: $controller.settings.transcriptionBackend) {
                 ForEach(AppSettings.TranscriptionBackend.allCases, id: \.self) { backend in
                     Text(backend.rawValue).tag(backend)

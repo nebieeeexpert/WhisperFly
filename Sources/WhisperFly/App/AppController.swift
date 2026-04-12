@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import AVFoundation
+import UniformTypeIdentifiers
 import os.log
 
 private let log = Logger(subsystem: "com.whisperfly", category: "AppController")
@@ -17,6 +18,7 @@ final class AppController: ObservableObject {
     
     private let settingsStore = SettingsStore()
     private var audioService = AudioCaptureService()
+    private var systemAudioService = SystemAudioCaptureService()
     private var hotkeyMonitor = HotkeyMonitor()
     private var pasteService: PasteService
     private var currentRecordingURL: URL?
@@ -124,6 +126,18 @@ final class AppController: ObservableObject {
                 self?.finishRecording()
             }
         }
+        
+        systemAudioService.configure(maxRecordingSeconds: settings.maxRecordingSeconds)
+        systemAudioService.onAudioLevel = { [weak self] level in
+            Task { @MainActor in
+                self?.audioLevel = level
+            }
+        }
+        systemAudioService.onMaxDurationReached = { [weak self] in
+            Task { @MainActor in
+                self?.finishRecording()
+            }
+        }
     }
     
     // MARK: - Recording Pipeline
@@ -146,7 +160,12 @@ final class AppController: ObservableObject {
     func startRecording() {
         guard status == .idle else { return }
         refreshAccessibility()
-        targetApp = NSWorkspace.shared.frontmostApplication
+        // Only capture target app for microphone mode (paste into it)
+        if settings.audioSource == .microphone {
+            targetApp = NSWorkspace.shared.frontmostApplication
+        } else {
+            targetApp = nil
+        }
         status = .recording
         errorMessage = nil
         hideTask?.cancel()
@@ -154,7 +173,13 @@ final class AppController: ObservableObject {
         
         Task {
             do {
-                let url = try await audioService.startRecording()
+                let url: URL
+                switch settings.audioSource {
+                case .microphone:
+                    url = try await audioService.startRecording()
+                case .systemAudio:
+                    url = try await systemAudioService.startRecording()
+                }
                 currentRecordingURL = url
             } catch {
                 status = .error(error.localizedDescription)
@@ -167,7 +192,13 @@ final class AppController: ObservableObject {
         
         Task {
             do {
-                let url = try await audioService.stopRecording()
+                let url: URL
+                switch settings.audioSource {
+                case .microphone:
+                    url = try await audioService.stopRecording()
+                case .systemAudio:
+                    url = try await systemAudioService.stopRecording()
+                }
                 currentRecordingURL = url
                 await processAudio(url: url)
             } catch {
@@ -179,6 +210,7 @@ final class AppController: ObservableObject {
     func cancelCurrentOperation() {
         Task {
             await audioService.cancelRecording()
+            await systemAudioService.cancelRecording()
         }
         status = .idle
         audioLevel = -160
@@ -232,33 +264,42 @@ final class AppController: ObservableObject {
             status = .pasting
             log.info("finalText to paste: '\(finalText)'")
 
-            // Always re-activate the target app before pasting. Even though
-            // WhisperFly is .accessory with a non-activating panel, the menu bar
-            // popover or other apps can steal focus during transcription/rewrite.
-            if let app = targetApp, !app.isTerminated {
-                let frontPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
-                log.info("Target PID=\(app.processIdentifier), frontmost PID=\(frontPID ?? -1)")
-                app.activate()
-                // Wait for activation to settle — 200ms minimum.
-                try? await Task.sleep(for: .milliseconds(200))
-                // Verify activation succeeded; retry once if needed.
-                if NSWorkspace.shared.frontmostApplication?.processIdentifier != app.processIdentifier {
-                    log.warning("First activate() didn't take, retrying...")
-                    app.activate()
-                    try? await Task.sleep(for: .milliseconds(200))
-                }
+            if settings.audioSource == .systemAudio {
+                // System audio mode: copy to clipboard only (no paste into app)
+                let pasteboard = NSPasteboard.general
+                pasteboard.clearContents()
+                pasteboard.setString(finalText, forType: .string)
+                log.info("✅ System audio transcription copied to clipboard")
             } else {
-                log.warning("No valid targetApp, pasting to whatever is frontmost")
-                try? await Task.sleep(for: .milliseconds(settings.pasteDelayMs))
-            }
-            let targetPID = targetApp?.processIdentifier
-            let insertResult: InsertResult
-            do {
-                insertResult = try pasteService.insert(text: finalText, targetPID: targetPID)
-                log.info("Insert result: \(String(describing: insertResult))")
-            } catch {
-                log.error("insert() threw: \(error.localizedDescription), trying clipboardInsert")
-                try? pasteService.clipboardInsert(finalText, targetPID: targetPID)
+                // Microphone mode: paste into the target app
+                // Always re-activate the target app before pasting. Even though
+                // WhisperFly is .accessory with a non-activating panel, the menu bar
+                // popover or other apps can steal focus during transcription/rewrite.
+                if let app = targetApp, !app.isTerminated {
+                    let frontPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
+                    log.info("Target PID=\(app.processIdentifier), frontmost PID=\(frontPID ?? -1)")
+                    app.activate()
+                    // Wait for activation to settle — 200ms minimum.
+                    try? await Task.sleep(for: .milliseconds(200))
+                    // Verify activation succeeded; retry once if needed.
+                    if NSWorkspace.shared.frontmostApplication?.processIdentifier != app.processIdentifier {
+                        log.warning("First activate() didn't take, retrying...")
+                        app.activate()
+                        try? await Task.sleep(for: .milliseconds(200))
+                    }
+                } else {
+                    log.warning("No valid targetApp, pasting to whatever is frontmost")
+                    try? await Task.sleep(for: .milliseconds(settings.pasteDelayMs))
+                }
+                let targetPID = targetApp?.processIdentifier
+                let insertResult: InsertResult
+                do {
+                    insertResult = try pasteService.insert(text: finalText, targetPID: targetPID)
+                    log.info("Insert result: \(String(describing: insertResult))")
+                } catch {
+                    log.error("insert() threw: \(error.localizedDescription), trying clipboardInsert")
+                    try? pasteService.clipboardInsert(finalText, targetPID: targetPID)
+                }
             }
 
             if settings.readAloudEnabled {
@@ -302,12 +343,114 @@ final class AppController: ObservableObject {
         }
     }
     
+    // MARK: - File Transcription
+    
+    /// Opens a file picker for audio/video files, transcribes the selected file,
+    /// and copies the result to the clipboard.
+    func transcribeFile() {
+        guard status == .idle else { return }
+        
+        let panel = NSOpenPanel()
+        panel.title = L("file.pick_title", "Select Audio or Video File")
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.allowedContentTypes = Self.mediaContentTypes
+        
+        guard panel.runModal() == .OK, let fileURL = panel.url else { return }
+        
+        status = .transcribing
+        errorMessage = nil
+        hideTask?.cancel()
+        floatingPanel.show(with: self)
+        
+        Task {
+            await processFile(url: fileURL)
+        }
+    }
+    
+    private static let mediaContentTypes: [UTType] = {
+        var types: [UTType] = [.audio, .movie]
+        if let mp3 = UTType(filenameExtension: "mp3") { types.append(mp3) }
+        if let m4a = UTType(filenameExtension: "m4a") { types.append(m4a) }
+        if let wav = UTType(filenameExtension: "wav") { types.append(wav) }
+        if let flac = UTType(filenameExtension: "flac") { types.append(flac) }
+        return types
+    }()
+    
+    /// Extracts audio from the file (if needed), transcribes, optionally rewrites,
+    /// and copies the final text to the clipboard.
+    private func processFile(url: URL) async {
+        var extractedURL: URL?
+        defer {
+            if let extracted = extractedURL, extracted != url {
+                try? FileManager.default.removeItem(at: extracted)
+            }
+        }
+        
+        do {
+            let audioURL = try await AudioConverter.extractAudio(from: url)
+            extractedURL = audioURL
+            
+            let recognizer = makeRecognizer()
+            let result = try await recognizer.transcribe(audioURL: audioURL)
+            lastTranscription = result.text
+            
+            guard !result.text.isEmpty else {
+                status = .error(L("error.no_speech", "No speech detected"))
+                floatingPanel.hide()
+                return
+            }
+            
+            var finalText = result.text
+            
+            if settings.geminiRewriteEnabled, !settings.openRouterApiKey.isEmpty {
+                status = .rewriting
+                do {
+                    let rewriter = GeminiRewriter(apiKey: settings.openRouterApiKey, model: settings.openRouterModel)
+                    let rewriteResult = try await rewriter.rewrite(
+                        inputText: result.text,
+                        locale: Locale.current,
+                        mode: settings.rewriteMode
+                    )
+                    lastRewrite = rewriteResult.rewrittenText
+                    finalText = rewriteResult.rewrittenText
+                    lastLatency = result.latency + rewriteResult.latency
+                } catch {
+                    lastRewrite = ""
+                    lastLatency = result.latency
+                }
+            } else {
+                lastRewrite = ""
+                lastLatency = result.latency
+            }
+            
+            // Always copy to clipboard for file transcription
+            status = .pasting
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.setString(finalText, forType: .string)
+            log.info("✅ File transcription copied to clipboard (\(finalText.count) chars)")
+            
+            if settings.readAloudEnabled {
+                readAloud(finalText)
+            }
+            
+            status = .idle
+            scheduleHidePanel()
+            
+        } catch {
+            status = .error(error.localizedDescription)
+            floatingPanel.hide()
+        }
+    }
+    
     // MARK: - Settings
     
     func saveSettings() {
         settingsStore.save(settings)
         pasteService = PasteService(pasteDelayMs: settings.pasteDelayMs)
         audioService.configure(maxRecordingSeconds: settings.maxRecordingSeconds)
+        systemAudioService.configure(maxRecordingSeconds: settings.maxRecordingSeconds)
     }
     
     func dismissError() {

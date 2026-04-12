@@ -68,3 +68,16 @@
 "rewrite.cleanup" = "Limpieza";
 "rewrite.punctuate" = "Puntuación";
 "rewrite.translate" = "Traducir al inglés";
+
+/* Audio source */
+"settings.audio_source" = "Fuente de audio";
+"audio_source.microphone" = "Micrófono";
+"audio_source.system_audio" = "Audio del sistema";
+"menu.start_capture" = "Capturar audio del sistema";
+"floating.capturing" = "Capturando…";
+"floating.copied" = "Copiado ✓";
+
+/* File transcription */
+"menu.transcribe_file" = "Transcribir archivo…";
+"file.pick_title" = "Seleccionar archivo de audio o video";
+"error.no_speech" = "No se detectó voz";

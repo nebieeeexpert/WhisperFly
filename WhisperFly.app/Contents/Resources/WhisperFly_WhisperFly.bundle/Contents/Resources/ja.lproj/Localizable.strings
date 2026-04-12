@@ -68,3 +68,16 @@
 "rewrite.cleanup" = "クリーンアップ";
 "rewrite.punctuate" = "句読点";
 "rewrite.translate" = "英語に翻訳";
+
+/* Audio source */
+"settings.audio_source" = "音声ソース";
+"audio_source.microphone" = "マイク";
+"audio_source.system_audio" = "システム音声";
+"menu.start_capture" = "システム音声をキャプチャ";
+"floating.capturing" = "キャプチャ中…";
+"floating.copied" = "コピー済 ✓";
+
+/* File transcription */
+"menu.transcribe_file" = "ファイルを文字起こし…";
+"file.pick_title" = "音声または動画ファイルを選択";
+"error.no_speech" = "音声が検出されませんでした";

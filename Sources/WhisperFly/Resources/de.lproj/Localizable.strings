@@ -68,3 +68,16 @@
 "rewrite.cleanup" = "Bereinigen";
 "rewrite.punctuate" = "Interpunktion";
 "rewrite.translate" = "Ins Englische übersetzen";
+
+/* Audio source */
+"settings.audio_source" = "Audioquelle";
+"audio_source.microphone" = "Mikrofon";
+"audio_source.system_audio" = "Systemaudio";
+"menu.start_capture" = "Systemaudio aufnehmen";
+"floating.capturing" = "Aufnahme…";
+"floating.copied" = "Kopiert ✓";
+
+/* File transcription */
+"menu.transcribe_file" = "Datei transkribieren…";
+"file.pick_title" = "Audio- oder Videodatei auswählen";
+"error.no_speech" = "Keine Sprache erkannt";

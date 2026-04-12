@@ -68,3 +68,16 @@
 "rewrite.cleanup" = "清理";
 "rewrite.punctuate" = "标点";
 "rewrite.translate" = "翻译为英语";
+
+/* Audio source */
+"settings.audio_source" = "音频来源";
+"audio_source.microphone" = "麦克风";
+"audio_source.system_audio" = "系统音频";
+"menu.start_capture" = "捕获系统音频";
+"floating.capturing" = "捕获中…";
+"floating.copied" = "已复制 ✓";
+
+/* File transcription */
+"menu.transcribe_file" = "转录文件…";
+"file.pick_title" = "选择音频或视频文件";
+"error.no_speech" = "未检测到语音";
