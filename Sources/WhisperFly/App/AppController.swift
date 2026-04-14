@@ -3,6 +3,7 @@ import SwiftUI
 import AVFoundation
 import UniformTypeIdentifiers
 import os.log
+import UserNotifications
 
 private let log = Logger(subsystem: "com.whisperfly", category: "AppController")
 
@@ -15,7 +16,7 @@ final class AppController: ObservableObject {
     @Published var lastRewrite: String = ""
     @Published var lastLatency: TimeInterval = 0
     @Published var errorMessage: String?
-    
+
     private let settingsStore = SettingsStore()
     private var audioService = AudioCaptureService()
     private var systemAudioService = SystemAudioCaptureService()
@@ -32,7 +33,16 @@ final class AppController: ObservableObject {
     private var accessibilityPollTask: Task<Void, Never>?
     /// Tracks the file name when transcribing a file
     private var currentFileName: String?
-    
+    /// Set to `true` when the system-audio recording receives at least one
+    /// non-silent sample (level > -50 dBFS).  Used to detect the macOS 26
+    /// SCStream silent-audio dropout bug and show the user a useful warning.
+    private var systemAudioHadSignal = false
+    /// Snapshots which audio source was active when recording started.
+    /// Using this instead of `settings.audioSource` at stop-time prevents
+    /// the wrong service from being stopped if the user switches the source
+    /// picker while a recording is in progress.
+    private var activeAudioSource: AppSettings.AudioSource?
+
     @Published var accessibilityGranted: Bool = false
     @Published var screenRecordingGranted: Bool = false
 
@@ -46,10 +56,12 @@ final class AppController: ObservableObject {
         checkAccessibilityPermission()
         checkScreenRecordingPermission()
         observeAppActivation()
+        requestNotificationAuthorization()
     }
 
     /// Re-checks accessibility whenever the app becomes active (e.g. user returns from System Settings).
     private func observeAppActivation() {
+        requestNotificationAuthorization()
         NotificationCenter.default.addObserver(
             forName: NSApplication.didBecomeActiveNotification,
             object: nil,
@@ -112,21 +124,28 @@ final class AppController: ObservableObject {
     /// Probes Screen Recording permission by attempting a lightweight SCShareableContent query.
     /// On macOS 14+, SCShareableContent throws if not authorized.
     private static func probeScreenRecording() -> Bool {
-        // CGWindowListCopyWindowInfo returns empty or a nil array when Screen Recording is denied.
-        let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []
-        // If we get window info with owner names from other apps, permission is granted.
-        let hasOtherAppWindows = list.contains { info in
-            guard let pid = info[kCGWindowOwnerPID as String] as? Int32 else { return false }
-            return pid != ProcessInfo.processInfo.processIdentifier
-        }
-        return hasOtherAppWindows
+        CGPreflightScreenCaptureAccess()
     }
 
     /// Opens System Settings to the Screen Recording pane.
     func requestScreenRecordingPermission() {
+        CGRequestScreenCaptureAccess()
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
             NSWorkspace.shared.open(url)
         }
+    }
+
+    private func requestNotificationAuthorization() {
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+    }
+
+    func showNotification(title: String, body: String) {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .default
+        let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request)
     }
 
     // MARK: - History & Result Panels
@@ -134,9 +153,9 @@ final class AppController: ObservableObject {
     func showHistory() {
         historyPanel.show(history: history, resultPanel: resultPanel)
     }
-    
+
     // MARK: - Hotkey
-    
+
     private func setupHotkey() {
         hotkeyMonitor.onPress = { [weak self] in
             Task { @MainActor in
@@ -154,7 +173,7 @@ final class AppController: ObservableObject {
             self.errorMessage = "Hotkey registration failed: \(error.localizedDescription)"
         }
     }
-    
+
     private func setupAudioCallbacks() {
         audioService.configure(maxRecordingSeconds: settings.maxRecordingSeconds)
         audioService.onAudioLevel = { [weak self] level in
@@ -167,11 +186,16 @@ final class AppController: ObservableObject {
                 self?.finishRecording()
             }
         }
-        
+
         systemAudioService.configure(maxRecordingSeconds: settings.maxRecordingSeconds)
         systemAudioService.onAudioLevel = { [weak self] level in
             Task { @MainActor in
-                self?.audioLevel = level
+                guard let self else { return }
+                self.audioLevel = level
+                // Track whether any non-silent audio arrived (macOS 26 dropout guard).
+                if level > -50 {
+                    self.systemAudioHadSignal = true
+                }
             }
         }
         systemAudioService.onMaxDurationReached = { [weak self] in
@@ -180,9 +204,9 @@ final class AppController: ObservableObject {
             }
         }
     }
-    
+
     // MARK: - Recording Pipeline
-    
+
     private func hotkeyPressed() {
         switch status {
         case .idle:
@@ -193,62 +217,128 @@ final class AppController: ObservableObject {
             break
         }
     }
-    
+
     private func hotkeyReleased() {
         // Toggle mode: do nothing on release
     }
-    
+
     func startRecording() {
         guard status == .idle else { return }
         refreshAccessibility()
-        // Only capture target app for microphone mode (paste into it)
+
+        switch settings.audioSource {
+        case .microphone:
+            let authStatus = AVCaptureDevice.authorizationStatus(for: .audio)
+            switch authStatus {
+            case .denied, .restricted:
+                status = .error("Microphone access denied. Open System Settings -> Privacy -> Microphone.")
+                showNotification(title: "Microphone Required", body: "Open System Settings -> Privacy -> Microphone and enable WhisperFly.")
+                return
+            default:
+                break
+            }
+
+        case .systemAudio:
+            // Always request access — shows the system dialog on the very first call.
+            CGRequestScreenCaptureAccess()
+            checkScreenRecordingPermission()
+            // Do NOT hard-block on !screenRecordingGranted here.
+            // CGPreflightScreenCaptureAccess() returns false negatives on macOS 26
+            // (Tahoe) even when the user has already granted permission.
+            // The authoritative check is the SCShareableContent call inside
+            // SystemAudioCaptureService.startRecording(); if that throws we surface
+            // a clear error below.
+            if !screenRecordingGranted {
+                log.warning("CGPreflightScreenCaptureAccess returned false — proceeding anyway (macOS 26 false-negative workaround)")
+            }
+        }
+
         if settings.audioSource == .microphone {
             targetApp = NSWorkspace.shared.frontmostApplication
         } else {
             targetApp = nil
         }
+
         status = .recording
         errorMessage = nil
         hideTask?.cancel()
         floatingPanel.show(with: self)
-        
+
+        activeAudioSource = settings.audioSource
+        if settings.audioSource == .systemAudio {
+            systemAudioHadSignal = false
+        }
+
         Task {
             do {
                 let url: URL
-                switch settings.audioSource {
-                case .microphone:
+                switch activeAudioSource {
+                case .microphone, nil:
                     url = try await audioService.startRecording()
                 case .systemAudio:
                     url = try await systemAudioService.startRecording()
                 }
                 currentRecordingURL = url
             } catch {
+                log.error("startRecording failed: \(error.localizedDescription)")
                 status = .error(error.localizedDescription)
+                // Code 30 is the Screen Recording permission error thrown by
+                // SystemAudioCaptureService when SCShareableContent is denied.
+                let nsErr = error as NSError
+                if nsErr.domain == "WhisperFly" && nsErr.code == 30 {
+                    showNotification(
+                        title: "Screen Recording Required",
+                        body: "Open System Settings → Privacy & Security → Screen Recording and enable WhisperFly, then try again."
+                    )
+                } else {
+                    showNotification(title: "Recording Failed", body: error.localizedDescription)
+                }
+                floatingPanel.hide()
             }
         }
     }
-    
+
     func finishRecording() {
         guard status == .recording else { return }
-        
+
+        // Snapshot state before the async stop clears it.
+        let hadSignal = systemAudioHadSignal
+        let source = activeAudioSource   // use start-time source, not current setting
+        activeAudioSource = nil
+        systemAudioHadSignal = false
+
         Task {
             do {
                 let url: URL
-                switch settings.audioSource {
-                case .microphone:
+                switch source {
+                case .microphone, nil:
                     url = try await audioService.stopRecording()
                 case .systemAudio:
                     url = try await systemAudioService.stopRecording()
+                    // macOS 26 SCStream bug: the stream starts but delivers only
+                    // zero-valued samples, so the file contains no real audio.
+                    // Warn the user before we send silence to the transcription API.
+                    if !hadSignal {
+                        log.warning("System audio recording contained no signal — possible macOS 26 SCStream dropout")
+                        showNotification(
+                            title: "Silent Recording Detected",
+                            body: "No audio signal was captured. This is a known ScreenCaptureKit issue on macOS 26. Try: quit other screen-recording apps, toggle System Audio off/on, or restart WhisperFly."
+                        )
+                    }
                 }
                 currentRecordingURL = url
                 await processAudio(url: url)
             } catch {
+                log.error("finishRecording failed: \(error.localizedDescription)")
                 status = .error(error.localizedDescription)
+                floatingPanel.hide()
             }
         }
     }
-    
+
     func cancelCurrentOperation() {
+        activeAudioSource = nil
+        systemAudioHadSignal = false
         Task {
             await audioService.cancelRecording()
             await systemAudioService.cancelRecording()
@@ -258,28 +348,28 @@ final class AppController: ObservableObject {
         targetApp = nil
         floatingPanel.hide()
     }
-    
+
     // MARK: - Transcription + Rewrite Pipeline
-    
+
     private func processAudio(url: URL) async {
         status = .transcribing
         audioLevel = -160
         defer {
             try? FileManager.default.removeItem(at: url)
         }
-        
+
         do {
             let recognizer = makeRecognizer()
             let result = try await recognizer.transcribe(audioURL: url)
             lastTranscription = result.text
-            
+
             guard !result.text.isEmpty else {
                 status = .error("No speech detected")
                 return
             }
-            
+
             var finalText = result.text
-            
+
             if settings.geminiRewriteEnabled, !settings.openRouterApiKey.isEmpty {
                 status = .rewriting
                 do {
@@ -301,7 +391,7 @@ final class AppController: ObservableObject {
                 lastRewrite = ""
                 lastLatency = result.latency
             }
-            
+
             status = .pasting
             log.info("finalText to paste: '\(finalText)'")
 
@@ -360,14 +450,14 @@ final class AppController: ObservableObject {
             status = .idle
             targetApp = nil
             scheduleHidePanel()
-            
+
         } catch {
             status = .error(error.localizedDescription)
             targetApp = nil
             floatingPanel.hide()
         }
     }
-    
+
     private func readAloud(_ text: String) {
         speechSynthesizer.stopSpeaking(at: .immediate)
         let utterance = AVSpeechUtterance(string: text)
@@ -375,7 +465,7 @@ final class AppController: ObservableObject {
         utterance.rate = AVSpeechUtteranceDefaultSpeechRate
         speechSynthesizer.speak(utterance)
     }
-    
+
     private func scheduleHidePanel() {
         hideTask?.cancel()
         hideTask = Task {
@@ -384,7 +474,7 @@ final class AppController: ObservableObject {
             floatingPanel.hide()
         }
     }
-    
+
     private func makeRecognizer() -> SpeechRecognizer {
         switch settings.transcriptionBackend {
         case .groqWhisper:
@@ -393,33 +483,33 @@ final class AppController: ObservableObject {
             return GeminiTranscriber(apiKey: settings.openRouterApiKey, language: settings.sourceLanguage, model: settings.openRouterModel)
         }
     }
-    
+
     // MARK: - File Transcription
-    
+
     /// Opens a file picker for audio/video files, transcribes the selected file,
     /// and copies the result to the clipboard.
     func transcribeFile() {
         guard status == .idle else { return }
-        
+
         let panel = NSOpenPanel()
         panel.title = L("file.pick_title", "Select Audio or Video File")
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.allowedContentTypes = Self.mediaContentTypes
-        
+
         guard panel.runModal() == .OK, let fileURL = panel.url else { return }
-        
+
         currentFileName = fileURL.lastPathComponent
         status = .transcribing
         errorMessage = nil
         hideTask?.cancel()
         floatingPanel.show(with: self)
-        
+
         Task {
             await processFile(url: fileURL)
         }
     }
-    
+
     private static let mediaContentTypes: [UTType] = {
         var types: [UTType] = [.audio, .movie]
         if let mp3 = UTType(filenameExtension: "mp3") { types.append(mp3) }
@@ -428,7 +518,7 @@ final class AppController: ObservableObject {
         if let flac = UTType(filenameExtension: "flac") { types.append(flac) }
         return types
     }()
-    
+
     /// Extracts audio from the file (if needed), transcribes, optionally rewrites,
     /// and copies the final text to the clipboard.
     private func processFile(url: URL) async {
@@ -438,23 +528,23 @@ final class AppController: ObservableObject {
                 try? FileManager.default.removeItem(at: extracted)
             }
         }
-        
+
         do {
             let audioURL = try await AudioConverter.extractAudio(from: url)
             extractedURL = audioURL
-            
+
             let recognizer = makeRecognizer()
             let result = try await recognizer.transcribe(audioURL: audioURL)
             lastTranscription = result.text
-            
+
             guard !result.text.isEmpty else {
                 status = .error(L("error.no_speech", "No speech detected"))
                 floatingPanel.hide()
                 return
             }
-            
+
             var finalText = result.text
-            
+
             if settings.geminiRewriteEnabled, !settings.openRouterApiKey.isEmpty {
                 status = .rewriting
                 do {
@@ -475,14 +565,14 @@ final class AppController: ObservableObject {
                 lastRewrite = ""
                 lastLatency = result.latency
             }
-            
+
             // Always copy to clipboard for file transcription
             status = .pasting
             let pasteboard = NSPasteboard.general
             pasteboard.clearContents()
             pasteboard.setString(finalText, forType: .string)
             log.info("✅ File transcription copied to clipboard (\(finalText.count) chars)")
-            
+
             if settings.readAloudEnabled {
                 readAloud(finalText)
             }
@@ -498,28 +588,28 @@ final class AppController: ObservableObject {
 
             status = .idle
             scheduleHidePanel()
-            
+
         } catch {
             currentFileName = nil
             status = .error(error.localizedDescription)
             floatingPanel.hide()
         }
     }
-    
+
     // MARK: - Settings
-    
+
     func saveSettings() {
         settingsStore.save(settings)
         pasteService = PasteService(pasteDelayMs: settings.pasteDelayMs)
         audioService.configure(maxRecordingSeconds: settings.maxRecordingSeconds)
         systemAudioService.configure(maxRecordingSeconds: settings.maxRecordingSeconds)
     }
-    
+
     func dismissError() {
         status = .idle
         errorMessage = nil
     }
-    
+
     var hasValidAPIKeys: Bool {
         switch settings.transcriptionBackend {
         case .groqWhisper:
